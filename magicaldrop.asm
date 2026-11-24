@@ -349,15 +349,57 @@ push_new_row:
     addi $t2, $zero, 12 # row index
     addi $t3, $zero, -1 # stop when row index passes row 0
     
-    copy_row_loop:
-        beq $t2, $t3, end_copy_row_loop 
-        add $t4, $zero, $zero # col index
-        addi $t5, $zero, 7 # 7 cols per row
-        
-        copy_col_loop:
-            beq $t4, $t5, end_copy_col_loop 
-            lw $t6 0($t0) # load the colour of the cell
-            sw $t6, 28($t0) # copy the colour to col a row below (1 row = 28 bytes)
+copy_row_loop:
+    beq $t2, $t3, end_copy_row_loop 
+    add $t4, $zero, $zero # col index
+    addi $t5, $zero, 7 # 7 cols per row
+    
+copy_col_loop:
+    beq $t4, $t5, end_copy_col_loop 
+    lw $t6 0($t0) # load the colour of the cell
+    sw $t6, 28($t0) # copy the colour to col a row below (1 row = 28 bytes)
 
+    # update indices
+    addi $t0, $t0, 4 # next unit in row
+    addi $t4, $t4, 1
+    
+    j copy_col_loop
+    
+end_copy_col_loop:
+    addi $t0, $t0, -56 # go up to previous row, -28 for undo this row, to begin, and -28 for go row up
+    addi $t2, $t2, -1 # row index - 1
+    
+    j copy_row_loop
 
+end_copy_row_loop: 
+    # populate row 0 with random colours
+    la $t0, playing_field # go back to first address of playing field
+    # initialize loop vars
+    add $t1, $zero, $zero # iterator of loop, col
+    addi $t2, $zero, 7 # go up to 7 cols
+    
+# populate the first row with random generated colours
+fill_first_row_loop:
+    beq $t1, $t2, end_fill_first_row_loop
+    # generate random num, stored in $a0 from 0 to 3
+    li $v0, 42
+    li $a0, 0
+    li $a1, 4
+    syscall
+    
+    # find address of random colour
+    la $t3, colour_red	# get address of first colour and store in $t3
+    sll $a0, $a0, 2 # shift $a0, the random num left by 2 bits = multiply by 4
+    add $t3, $t3, $a0 # add this offset to find address of random colour
+    lw $t4, 0($t3)
+    sw $t4, 0($t0) # store colour to current cell of playing_field
+    
+    # increment
+    addi $t0, $t0, 4 # add 4 bytes to get to next cell, since $t0 stores address
+    addi $t1, $t1, 1
+    j fill_first_row_loop
+
+end_fill_first_row_loop:
+    jr $ra
+    
 check_game_over:

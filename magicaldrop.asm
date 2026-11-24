@@ -38,6 +38,9 @@ colour_player: .word 0xffc0cb
 ##############################################################################
 playing_field: .space 392 # stores the random colours for each cell, 14 * 7 * 4 bytes
 player_col: .word 3 # start in middle
+collected_bubble_colour: .word 0 # colour of collected bubble
+collected_bubble_count: .word 0 # # of bubbles collected
+keystroke_count: .word 0 # # keystrokes since last new row, 
 ##############################################################################
 # Code
 ##############################################################################
@@ -49,15 +52,63 @@ main:
     # Initialize the game
     jal gen_random_colours # pick random colours for balls
     jal draw_border
-    jal draw_playing_field
-    jal draw_player
 
 game_loop:
     # 1a. Check if key has been pressed
+    lw $t0, ADDR_KBRD # $t0 = base address for keyboard
+    lw $t8, 0($t0) # load first word from keyboard, which tells us if key pressed or not
+    beq $t8, 1, keyboard_input  # if first word 1, key is pressed
+    j end_keyboard_input # skip
+
     # 1b. Check which key has been pressed
+keyboard_input:
+    lw $a0, 4($t0) # load second word from keyboard, which stores the actual key
+    beq $a0, 0x61, respond_to_A # check if key a was pressed
+    beq $a0, 0x64, respond_to_D # check if key d was pressed
+    beq $a0, 0x73, respond_to_S # check if key s was pressed
+    beq $a0, 0x71, respond_to_Q # check if the key q was pressed
+    j end_keyboard_input # skip
+
+respond_to_A:
+    jal player_move_left
+    j increment_num_keystrokes
+
+respond_to_D:
+    jal player_move_right
+    j increment_num_keystrokes
+
+respond_to_S:
+    jal player_collect
+    j increment_num_keystrokes
+
+respond_to_Q:
+    li $v0, 10
+    syscall
+    
+increment_num_keystrokes:
+    lw $t1, keystroke_count # load actual 4 byte data value 
+    addi $t1, $t1, 1 # increment the value
+    la $t9, keystroke_count # load address of keystroke_count
+    sw $t1, 0($t9) # store word (4 bytes) into that address of keystroke_count (saving in mem)
+    
+    bne $t1, 10, end_keyboard_input # if # of keystrokes != 10, skip
+    
+    # store 0 word to the keystroke_count
+    la $t9, keystroke_count 
+    sw $zero, 0($t9)
+    
+    jal push_new_row
+    jal check_game_over 
+    
+end_keyboard_input:
+# nothing
+
     # 2a. Check for collisions
 	# 2b. Update locations (capsules)
 	# 3. Draw the screen
+	jal draw_playing_field
+    jal draw_player
+	
 	# 4. Sleep
     li $v0, 32
     li $a0, 5000
@@ -106,6 +157,96 @@ end_random_colours_loop:
         j black_loop
     end_black_loop:
         jr $ra
+
+# control movements
+player_move_left:
+    lw $t1, player_col
+    beq $t1, $zero, end_move_left # don't do anything
+    addi $t1, $t1, -1 # move 1 col to left
+    la $t9, player_col
+    sw $t1, 0($t9) # save updated col
+end_move_left:
+    jr $ra
+
+player_move_right:
+    lw $t1, player_col
+    addi $t2, $zero, 6 # we need to store 6 bc beq compares registers
+    beq $t1, $t2, end_move_right # don't do anything
+    addi $t1, $t1, 1 # move 1 col to right
+    la $t9, player_col
+    sw $t1, 0($t9) # save updated col
+end_move_right:
+    jr $ra
+
+player_collect:
+    la $t0, playing_field # address
+    addi $t0, $t0, 364 # this is the byte at the 1st cell of 13th row (last)
+    lw $t1, player_col # load player col
+    sll $t1, $t1, 2 # turn player col to bytes; multiplies by 2^2 = 4 bytes
+    add $t0, $t0, $t1 # get the exact position of player (+ col on 13th row)
+    
+    addi $t2, $zero, 13 # index of row; start at bottom
+    addi $t3, $zero, -1 # stop when row index is past index 0 (top)
+    lw $t7, colour_black # load the value of a black colour
+
+# 1. find bottom bubble in player's col
+find_first_ball_loop:
+    beq $t2, $t3, end_player_collect_loop # when we reached the top
+    lw $t4, 0($t0) # load value at address, which stores the colour
+    bne $t4, $t7, found_first_ball # if colour is not black, we found a ball
+    
+    # update indexes
+    addi $t0, $t0, -28 # move to row above, bytes
+    addi $t2, $t2, -1 # decrement to row above, index
+    
+    j find_first_ball_loop # loop again
+    
+# 2. can it be collected?
+found_first_ball:
+    lw $t5, collected_bubble_count # load # of balls collected
+    
+    # 2 possibilities:
+    beq $t5, $zero, set_collected_colour # currently have no balls collected
+    j check_same_colour_as_collected # else: we do have balls
+ 
+# possibility 1: this ball becomes the colour we are collecting
+set_collected_colour:
+    la $t9, collected_bubble_colour # load address of collected_bubble_colour
+    sw $t4, 0($t9) # saves colour to collected_bubble_colour
+    
+    add $t6, $zero, $t4 # $t6 stores the colour we're collecting
+    
+    j collect_balls_loop # now collect balls
+
+# possibility 2: we already collected balls
+check_same_colour_as_collected: 
+    lw $t6, collected_bubble_colour # $t6 loads the colour we collected
+    bne $t4, $t6, end_player_collect_loop # if colour is not same, we don't collect
+    
+    j collect_balls_loop # else, collect balls
+    
+# 3. if yes, collect
+collect_balls_loop:
+    beq $t2, $t3, end_player_collect_loop
+    
+    lw $t8, 0($t0) # $t8 stores colour at this cell
+    bne $t8, $t6, end_player_collect_loop # the colour at cell != colour we're collecting
+    
+    # collect
+    sw $t7, 0($t0)
+    
+    # update values
+    addi $t5, $t5, 1 # collected a ball, $t5 stores count of balls collected
+    la $t9, collected_bubble_count # get address of bubble count
+    sw $t5, 0($t9) # update count
+    
+    addi $t0, $t0, -28 # move to row above
+    addi $t2, $t2, -1 # move index to row above
+    
+    j collect_balls_loop 
+
+end_player_collect_loop:
+    jr $ra
 
 # follows branch_jump2 closely 
 draw_border: 
@@ -198,3 +339,25 @@ draw_player:
     sw $t2, 4($t0) # right unit of player
     
     jr $ra
+    
+push_new_row:
+    # start from row 12 and copy each row to row below it
+    la $t0, playing_field
+    
+    addi $t0, $t0, 336 # start at row 12
+    
+    addi $t2, $zero, 12 # row index
+    addi $t3, $zero, -1 # stop when row index passes row 0
+    
+    copy_row_loop:
+        beq $t2, $t3, end_copy_row_loop 
+        add $t4, $zero, $zero # col index
+        addi $t5, $zero, 7 # 7 cols per row
+        
+        copy_col_loop:
+            beq $t4, $t5, end_copy_col_loop 
+            lw $t6 0($t0) # load the colour of the cell
+            sw $t6, 28($t0) # copy the colour to col a row below (1 row = 28 bytes)
+
+
+check_game_over:

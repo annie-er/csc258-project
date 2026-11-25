@@ -26,6 +26,7 @@ ADDR_DSPL:
 ADDR_KBRD:
     .word 0xffff0000
 
+# follows memory.asm example
 colour_red: .word 0xff0000 # each .word stores 4 bytes
 colour_green: .word 0x00ff00
 colour_blue: .word 0x0000ff
@@ -67,7 +68,7 @@ keyboard_input:
     beq $a0, 0x64, respond_to_D # check if key d was pressed
     beq $a0, 0x73, respond_to_S # check if key s was pressed
     beq $a0, 0x71, respond_to_Q # check if the key q was pressed
-    j end_keyboard_input # skip
+    j end_keyboard_input # skip past below if checks
 
 respond_to_A:
     jal player_move_left
@@ -81,24 +82,28 @@ respond_to_S:
     jal player_collect
     j increment_num_keystrokes
 
+# followed keyboard.asm file
 respond_to_Q:
     li $v0, 10
     syscall
-    
+
+# followed keyboard.asm file
 increment_num_keystrokes:
     lw $t1, keystroke_count # load actual 4 byte data value 
     addi $t1, $t1, 1 # increment the value
     la $t9, keystroke_count # load address of keystroke_count
     sw $t1, 0($t9) # store word (4 bytes) into that address of keystroke_count (saving in mem)
     
-    bne $t1, 10, end_keyboard_input # if # of keystrokes != 10, skip
+    beq $t1, 10, branch_push_new_row # if # of keystrokes = 10, push new row
+    j end_keyboard_input
     
+branch_push_new_row:
     # store 0 word to the keystroke_count
-    la $t9, keystroke_count 
+    la $t9, keystroke_count # get address
     sw $zero, 0($t9)
     
     jal push_new_row
-    jal check_game_over 
+    # jal check_game_over 
     
 end_keyboard_input:
 # nothing
@@ -108,10 +113,11 @@ end_keyboard_input:
 	# 3. Draw the screen
 	jal draw_playing_field
     jal draw_player
+    jal check_game_over 
 	
 	# 4. Sleep
     li $v0, 32
-    li $a0, 5000
+    li $a0, 16 # 1 second = 10000 ms, 60 frames per second = 16ms/frame
     syscall
 
     # 5. Go back to Step 1
@@ -248,7 +254,7 @@ collect_balls_loop:
 end_player_collect_loop:
     jr $ra
 
-# follows branch_jump2 closely 
+# follows branch_jump2.asm example closely 
 draw_border: 
     lw $t0, ADDR_DSPL # $t0 stores the base address for display
     # start drawing at x = 8 units = 32 bytes, y = 0; based off my sketch
@@ -284,7 +290,7 @@ end_border_line_loop:
 end_border_loop:
     jr $ra
 
-# follows branch_jump2 closely
+# follows branch_jump2.asm example closely
 draw_playing_field:
     lw $t0, ADDR_DSPL
     addi $t0, $t0, 164 # start drawing balls here; view sketch for why 164
@@ -328,7 +334,27 @@ end_play_field_loop:
     
 draw_player:
     lw $t0, ADDR_DSPL
-    addi $t0, $t0, 4004
+    addi $t0, $t0, 4004 # row 31, 32 units per row, 1 unit = 4 bytes + col 9 = (31 * 32 * 4) + (9 * 4) 
+    lw $t3, colour_black
+    
+    add $t4, $zero, $zero # col index
+    addi $t5, $zero, 14 # the width is 14 units
+    
+# loop through player row and make all black
+refresh_player_position_loop:
+    beq $t4, $t5, end_player_position_loop 
+    sw $t3, 0($t0) # black
+    
+    # increment values
+    addi $t4, $t4, 1 # move to next col
+    addi $t0, $t0, 4 # move to next unit in memory
+    
+j refresh_player_position_loop
+    
+end_player_position_loop:
+    # draw the new position
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 4004 # get to the start of player position
     
     lw $t1, player_col # col player currently in
     sll $t1, $t1, 3 # multiplies by 2^3 = 8 bytes, for 2 units, for byte rep
@@ -403,3 +429,34 @@ end_fill_first_row_loop:
     jr $ra
     
 check_game_over:
+    # if any unit in row 13 has a bubble (the value is not black), game becomes over
+    la $t0, playing_field
+    addi $t0, $t0, 364 # start of row 13 = 13 * 7 * 4 bytes
+    lw $t7, colour_black
+    
+    add $t1, $zero, $zero # index of cols
+    addi $t2, $zero, 7 # 7 cols
+
+# loop through cols
+loop_through_last_row:
+    beq $t1, $t2, end_last_row_loop # we looped through entire row, stop
+    lw $t3, 0($t0)
+    bne $t3, $t7, end_game # we have a colour in last row != black
+    
+    # update indices
+    addi $t1, $t1, 1 # move to next index
+    addi $t0, $t0, 4 # move to next byte
+    
+    j loop_through_last_row
+    
+end_last_row_loop:
+    jr $ra
+    
+end_game:
+    # something i noticed: increment_num_keystrokes would jump to check_game_over 
+    # then check_game_over ends the game
+    # but this is before anything is drawn, so user doesn't see the final state 
+    # but now i fixed it, so final state is shown, because called after drawing
+    li $v0, 10
+    syscall
+    

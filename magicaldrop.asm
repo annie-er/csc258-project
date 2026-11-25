@@ -2,7 +2,6 @@
 # This file contains our implementation of Magical Drop.
 #
 # Student 1: Annie Rong, 1010879694
-# Student 2: Name, Student Number (if applicable)
 #
 # We assert that the code submitted here is entirely our own 
 # creation, and will indicate otherwise when it is not.
@@ -68,6 +67,7 @@ keyboard_input:
     beq $a0, 0x64, respond_to_D # check if key d was pressed
     beq $a0, 0x73, respond_to_S # check if key s was pressed
     beq $a0, 0x71, respond_to_Q # check if the key q was pressed
+    beq $a0, 0x77, respond_to_W # check if the key w was pressed
     j end_keyboard_input # skip past below if checks
 
 respond_to_A:
@@ -87,6 +87,17 @@ respond_to_Q:
     li $v0, 10
     syscall
 
+respond_to_W:
+    # we only delete if a player throws balls
+    lw $t1, collected_bubble_count
+    bne $t1, $zero, player_can_throw 
+    j increment_num_keystrokes
+
+player_can_throw: 
+    jal player_throw
+    jal delete_matches # only check for matches and delete after player throws
+    j increment_num_keystrokes
+    
 # followed keyboard.asm file
 increment_num_keystrokes:
     lw $t1, keystroke_count # load actual 4 byte data value 
@@ -427,7 +438,62 @@ fill_first_row_loop:
 
 end_fill_first_row_loop:
     jr $ra
+
+# throw collected bubbles at column player currently in, below rows with bubbles
+player_throw:
+    # start at top of player's col
+    la $t0, playing_field # address of playing field (row 0)
+    lw $t1, player_col # load player col
+    sll $t1, $t1, 2 # turn player col to bytes; multiplies by 2^2 = 4 bytes
+    add $t0, $t0, $t1 # get the exact position of player in row 0
     
+    # indices
+    addi $t2, $zero, 0 # index of row; start at top
+    addi $t3, $zero, 14 # stop when row index reaches bottom
+    
+    # important variables to track:
+    lw $t5, collected_bubble_count # collected balls count
+    lw $t6, collected_bubble_colour # collected balls colour
+    lw $t7, colour_black # load the value of a black colour
+    
+# 1. find first empty row in player's col, loop down from i = 0 to 13, stop at 14
+find_first_empty_row_loop:
+    beq $t2, $t3, end_find_first_empty_row_loop # when we passed the bottom
+    lw $t4, 0($t0) # load value at address, which stores the colour
+    beq $t4, $t7, throw_bubble_loop # if colour is black, we found the first empty slot
+
+    # update indexes
+    addi $t0, $t0, 28 # move to row below, bytes
+    addi $t2, $t2, 1 # increment to row below, index
+    
+    j find_first_empty_row_loop # loop again
+
+# 2. now, we place balls down
+throw_bubble_loop:
+    # 2 conditions to stop loop:
+    beq $t5, $zero, end_throw_bubble_loop # no more balls to throw
+    beq $t2, $t3, end_throw_bubble_loop # we reached end
+    
+    sw $t6, 0($t0) # copy the collected ball colour to this byte position
+    
+    # update variables
+    addi $t5, $t5, -1 # decrease collected balls
+    addi $t0, $t0, 28 # go to row below
+    addi $t2, $t2, 1 # go to index row below
+    
+    j throw_bubble_loop
+
+end_throw_bubble_loop: 
+    # update the memory
+    la $t9, collected_bubble_count
+    sw $t5, 0($t9) # update
+    
+end_find_first_empty_row_loop: 
+    jr $ra
+
+delete_matches: 
+    
+
 check_game_over:
     # if any unit in row 13 has a bubble (the value is not black), game becomes over
     la $t0, playing_field

@@ -36,11 +36,11 @@ colour_player: .word 0xffc0cb
 ##############################################################################
 # Mutable Data
 ##############################################################################
-playing_field: .space 392 # stores the random colours for each cell, 14 * 7 * 4 bytes
+playing_field: .space 392 # stores the random colours for each cell, 14 rows * 7 cols * 4 bytes
 player_col: .word 3 # start in middle
 collected_bubble_colour: .word 0 # colour of collected bubble
 collected_bubble_count: .word 0 # # of bubbles collected
-keystroke_count: .word 0 # # keystrokes since last new row, 
+keystroke_count: .word 0 # # keystrokes since last new row
 ##############################################################################
 # Code
 ##############################################################################
@@ -54,13 +54,13 @@ main:
     jal draw_border
 
 game_loop:
-    # 1a. Check if key has been pressed
+    # 1a. Check if key has been pressed, followed keyboard.asm
     lw $t0, ADDR_KBRD # $t0 = base address for keyboard
     lw $t8, 0($t0) # load first word from keyboard, which tells us if key pressed or not
     beq $t8, 1, keyboard_input  # if first word 1, key is pressed
     j end_keyboard_input # skip
 
-    # 1b. Check which key has been pressed
+    # 1b. Check which key has been pressed, keyboard.asm
 keyboard_input:
     lw $a0, 4($t0) # load second word from keyboard, which stores the actual key
     beq $a0, 0x61, respond_to_A # check if key a was pressed
@@ -98,24 +98,21 @@ player_can_throw:
     jal delete_matches # only check for matches and delete after player throws
     j increment_num_keystrokes
     
-# followed keyboard.asm file
+# followed keyboard.asm file, and brunch_jump for divider and remainder logic
 increment_num_keystrokes:
     lw $t1, keystroke_count # load actual 4 byte data value 
     addi $t1, $t1, 1 # increment the value
-    la $t9, keystroke_count # load address of keystroke_count
-    sw $t1, 0($t9) # store word (4 bytes) into that address of keystroke_count (saving in mem)
+    la $t2, keystroke_count # load address of keystroke_count
+    sw $t1, 0($t2) # store word (4 bytes) into that address of keystroke_count (saving in mem)
     
-    beq $t1, 10, branch_push_new_row # if # of keystrokes = 10, push new row
-    j end_keyboard_input
-    
-branch_push_new_row:
-    # store 0 word to the keystroke_count
-    la $t9, keystroke_count # get address
-    sw $zero, 0($t9)
-    
+    # divide by 10 and check if it's divisible w/o remainders
+    addi $t9, $zero, 10 # store 10
+    div $t1, $t9
+    mfhi $t8 # remainder
+    # check if the remainder is zero or not
+    bne $t8, $zero, end_keyboard_input 
     jal push_new_row
-    # jal check_game_over 
-    
+
 end_keyboard_input:
 # nothing
 
@@ -128,13 +125,13 @@ end_keyboard_input:
 	
 	# 4. Sleep
     li $v0, 32
-    li $a0, 16 # 1 second = 10000 ms, 60 frames per second = 16ms/frame
+    li $a0, 17 # 1 second = 1000 ms, 60 frames per second = closer to 17ms/frame
     syscall
 
     # 5. Go back to Step 1
     j game_loop
 
-# function to store random colours for first 3 rows initially
+# function to store random colours for first 3 rows initially of playing field
 gen_random_colours:
     la $t0, playing_field # address of 1st byte
     # initialize loop vars
@@ -143,7 +140,7 @@ gen_random_colours:
     
 gen_random_colours_loop:
     beq $t1, $t2, end_random_colours_loop
-    # generate random num, stored in $a0 from 0 to 3
+    # generate random num, stored in $a0 from 0 to 3, follow syscall.asm
     li $v0, 42
     li $a0, 0
     li $a1, 4
@@ -151,7 +148,7 @@ gen_random_colours_loop:
     
     # find address of random colour
     la $t3, colour_red	# get address of first colour and store in $t3
-    sll $a0, $a0, 2 # shift $a0, the random num left by 2 bits = multiply by 4
+    sll $a0, $a0, 2 # $a0 gives num from 0-3, but we need a byte offset, so sll = multiply by 2^2 = 4 bytes
     add $t3, $t3, $a0 # add this offset to find address of random colour
     lw $t4, 0($t3)
     sw $t4, 0($t0) # store colour to current cell of playing_field
@@ -162,8 +159,9 @@ gen_random_colours_loop:
     j gen_random_colours_loop
 
 end_random_colours_loop:
+    # populate rest of cells black
     lw $t3, colour_black
-    addi $t2, $zero, 98 # 14 rows * 7 cols/row = 98 iterations, end
+    addi $t2, $zero, 98 # where to end: 14 rows * 7 cols/row = 98 iterations
 
     black_loop:
         beq $t1, $t2, end_black_loop
@@ -182,6 +180,7 @@ player_move_left:
     addi $t1, $t1, -1 # move 1 col to left
     la $t9, player_col
     sw $t1, 0($t9) # save updated col
+    jr $ra
 end_move_left:
     jr $ra
 
@@ -192,15 +191,16 @@ player_move_right:
     addi $t1, $t1, 1 # move 1 col to right
     la $t9, player_col
     sw $t1, 0($t9) # save updated col
+    jr $ra
 end_move_right:
     jr $ra
 
 player_collect:
     la $t0, playing_field # address
-    addi $t0, $t0, 364 # this is the byte at the 1st cell of 13th row (last)
+    addi $t0, $t0, 364 # skip 13 rows before the last (14th) = 13 rows * 7 cols * 4 bytes
     lw $t1, player_col # load player col
-    sll $t1, $t1, 2 # turn player col to bytes; multiplies by 2^2 = 4 bytes
-    add $t0, $t0, $t1 # get the exact position of player (+ col on 13th row)
+    sll $t1, $t1, 2 # turn player col to bytes so that we can get address; multiplies by 2^2 = 4 bytes
+    add $t0, $t0, $t1 # get the exact address of player (+ col on 13th row)
     
     addi $t2, $zero, 13 # index of row; start at bottom
     addi $t3, $zero, -1 # stop when row index is past index 0 (top)
@@ -249,7 +249,7 @@ collect_balls_loop:
     lw $t8, 0($t0) # $t8 stores colour at this cell
     bne $t8, $t6, end_player_collect_loop # the colour at cell != colour we're collecting
     
-    # collect
+    # collect, make this cell black
     sw $t7, 0($t0)
     
     # update values
@@ -269,7 +269,7 @@ end_player_collect_loop:
 draw_border: 
     lw $t0, ADDR_DSPL # $t0 stores the base address for display
     # start drawing at x = 8 units = 32 bytes, y = 0; based off my sketch
-    addi $t0, $t0, 32
+    addi $t0, $t0, 32 # start of display address + 32 bytes
     lw $t1, colour_grey
     
     # set height and width of our playing field (including border). will be used in loop
@@ -278,12 +278,14 @@ draw_border:
     
     add $t2, $zero, $zero # row index
 
+# nester for loop: row, 0 - 29, col: 8 - 24
 draw_border_loop:
-    beq $t2, $a0, end_border_loop
+    beq $t2, $a0, end_border_loop # iterate thru rows
     add $t3, $zero, $zero # col index
-    
+
+# iterate thru cols
 draw_border_line_loop:
-    beq $t3, $a1, end_border_line_loop 
+    beq $t3, $a1, end_border_line_loop # cols are all iterated thru
     sw $t1, 0($t0) # draw pixel at memory location
     # increment 
     addi $t0, $t0, 4 # move to next unit, which is 4 bytes away
@@ -293,7 +295,7 @@ draw_border_line_loop:
 
 end_border_line_loop:
     # calculated by sketch
-    addi $t0, $t0, 64 # set $t0 to first unit of next row of playing field
+    addi $t0, $t0, 64 # set $t0 to first unit of next row of playing field, see sketch
     addi $t2, $t2, 1 # update row counter as well
     
     j draw_border_loop
@@ -305,9 +307,9 @@ end_border_loop:
 draw_playing_field:
     lw $t0, ADDR_DSPL
     addi $t0, $t0, 164 # start drawing balls here; view sketch for why 164
-    la $t1, playing_field # address of current unit
+    la $t1, playing_field # address of current cell
     
-    addi $a0, $zero, 14 # height = 14 rows of units
+    addi $a0, $zero, 14 # height = 14 rows of cells
     addi $a1, $zero, 7 # width = 7 cols per row
 
     add $t2, $zero, $zero # row index
@@ -327,7 +329,7 @@ draw_play_line_loop:
     sw $t4, 132($t0) # second row, right unit, 1 row down + 1 unit right
 
     # increment 
-    addi $t0, $t0, 8 # move to next cell, 2 units away = 8 bytes
+    addi $t0, $t0, 8 # move to next cell, 2 units away = 8 bytes (since 1 unit = 4 bytes)
     addi $t1, $t1, 4 # move to next colour for cell 
     addi $t3, $t3, 1 # update col counter
     
@@ -368,8 +370,8 @@ end_player_position_loop:
     addi $t0, $t0, 4004 # get to the start of player position
     
     lw $t1, player_col # col player currently in
-    sll $t1, $t1, 3 # multiplies by 2^3 = 8 bytes, for 2 units, for byte rep
-    add $t0, $t0, $t1 # move that many bits to right
+    sll $t1, $t1, 3 # multiplies by 2^3 = 8 bytes, because 1 unit = 4 bytes, and each cell is 2 units = 8 bytes
+    add $t0, $t0, $t1 # move that many byts to right
     
     lw $t2, colour_player
     sw $t2, 0($t0) # left unit of player
@@ -393,7 +395,7 @@ copy_row_loop:
     
 copy_col_loop:
     beq $t4, $t5, end_copy_col_loop 
-    lw $t6 0($t0) # load the colour of the cell
+    lw $t6, 0($t0) # load the colour of the cell
     sw $t6, 28($t0) # copy the colour to col a row below (1 row = 28 bytes)
 
     # update indices
@@ -418,7 +420,7 @@ end_copy_row_loop:
 # populate the first row with random generated colours
 fill_first_row_loop:
     beq $t1, $t2, end_fill_first_row_loop
-    # generate random num, stored in $a0 from 0 to 3
+    # generate random num, stored in $a0 from 0 to 3, same as my gen_random_colours
     li $v0, 42
     li $a0, 0
     li $a1, 4
@@ -492,7 +494,75 @@ end_find_first_empty_row_loop:
     jr $ra
 
 delete_matches: 
+    # same logic as collect balls
+    la $t0, playing_field # address
+    addi $t0, $t0, 364 # this is the byte at the 1st cell of 13th row (last)
+    lw $t1, player_col # load player col
+    sll $t1, $t1, 2 # turn player col to bytes; multiplies by 2^2 = 4 bytes
+    add $t0, $t0, $t1 # get the exact position of player (+ col on 13th row)
     
+    addi $t2, $zero, 13 # index of row; start at bottom
+    addi $t3, $zero, -1 # stop when row index is past index 0 (top)
+    lw $t7, colour_black # load the value of a black colour
+
+# 1. find bottom bubble in player's col to start deleting
+find_bottom_ball_can_delete_loop:
+    beq $t2, $t3, end_delete_matches # when we reached the top
+    lw $t4, 0($t0) # load value at address, which stores the colour
+    bne $t4, $t7, found_bottom_ball_can_delete # if colour is not black, we found a ball
+    
+    # update indexes
+    addi $t0, $t0, -28 # move to row above, bytes
+    addi $t2, $t2, -1 # decrement to row above, index
+    
+    j find_bottom_ball_can_delete_loop # loop again
+
+found_bottom_ball_can_delete: 
+    # initial loop vars
+    add $t6, $zero, $t4 # $t6 stores the colour on the last row, the one we need to match against
+    
+    add $t5, $zero, $zero # # of same-coloured balls in that col
+    # add $t8, $zero, $t0 # address of bottom ball; to use when we delete 
+    
+count_num_matching_balls:
+    # we loop up
+    beq $t2, $t3, end_count_num_matches_loop # when we reached the top, we stop
+    lw $t9, 0($t0) # load value at address, which stores the colour
+    
+    bne $t9, $t6, end_count_num_matches_loop # we also stop if colour doesn't match
+    
+    # update variables
+    addi $t5, $t5, 1 # increment the num of same coloured balls
+    addi $t0, $t0, -28 # move to row above, bytes
+    addi $t2, $t2, -1 # decrement to row above, index
+    
+    j count_num_matching_balls
+    
+end_count_num_matches_loop: 
+    # check if we had 3 or more matches 
+    # if we only had 1 or 2, we do nothing
+    beq $t5, 1, end_delete_matches
+    beq $t5, 2, end_delete_matches
+    
+    # else: delete
+    # initialize variables for looping
+    add $t1, $zero, $zero # counter to keep track of num matches
+    addi $t0, $t0, 28 # set address of playing_field to go down 1 row to address of ball of the top match
+
+delete_matches_loop:
+    beq $t1, $t5, end_delete_matches
+    
+    # set cell to black
+    sw $t7, 0($t0) 
+    
+    # update vars
+    addi $t1, $t1, 1 # update counter
+    addi $t0, $t0, 28 # move row down
+
+    j delete_matches_loop
+
+end_delete_matches: 
+    jr $ra
 
 check_game_over:
     # if any unit in row 13 has a bubble (the value is not black), game becomes over

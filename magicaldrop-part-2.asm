@@ -55,12 +55,36 @@ main:
     jal gen_random_colours # pick random colours for balls
     jal draw_border
 
+    # start counting time
+    li $v0, 30
+    syscall
+    la $t9, time_prev_row_pushed
+    sw $a0, 0($t9)
+
 game_loop:
+    # start of game loop: check time
+    li $v0, 30
+    syscall
+    
+    lw $t1, time_prev_row_pushed
+    sub $t2, $a0, $t1 # get difference between current time - saved time
+    
+    addi $t3, $zero, 5000 # 5 seconds
+    blt $t2, $t3, skip_push_new_row # don't need to push new row
+    
+    # proceed to push a new row if > 5 seconds
+    la $t9, time_prev_row_pushed # get address
+    sw $a0, 0($t9) # update saved time 
+    jal push_new_row
+    
+    skip_push_new_row: 
+        #nothing 
+    
     # 1a. Check if key has been pressed, followed keyboard.asm
     lw $t0, ADDR_KBRD # $t0 = base address for keyboard
     lw $t8, 0($t0) # load first word from keyboard, which tells us if key pressed or not
     beq $t8, 1, keyboard_input  # if first word 1, key is pressed
-    j end_keyboard_input # skip
+    j end_keyboard_input # skip the below key responses
 
     # 1b. Check which key has been pressed, keyboard.asm
 keyboard_input:
@@ -113,7 +137,7 @@ increment_num_keystrokes:
     mfhi $t8 # remainder
     # check if the remainder is zero or not
     bne $t8, $zero, end_keyboard_input 
-    jal push_new_row
+    # jal push_new_row # not needed
 
 end_keyboard_input:
 # nothing
